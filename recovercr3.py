@@ -56,9 +56,14 @@ class Application:
             log.info("No CR3 files found")
 
     def restore(self, cr3, offset, size):
-        cr3.seek(offset)
         path = self.args.outdir / f'img{self.file_id}.cr3'
         self.file_id += 1
+
+        if path.exists():
+            log.info(f"{path} already exists: skipping")
+            return
+
+        cr3.seek(offset)
 
         bufsize = 8*MB
         log.info(f"Saving {path}, size {size:,d} B")
