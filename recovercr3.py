@@ -56,7 +56,8 @@ class Application:
             log.info("No CR3 files found")
 
     def restore(self, cr3, offset, size):
-        path = self.args.outdir / f'img{self.file_id}.cr3'
+        name = '%s%0*d.%s' % (self.args.prefix, self.args.numwidth, self.file_id, self.args.ext)
+        path = self.args.outdir / name
         self.file_id += 1
 
         if path.exists():
@@ -102,6 +103,20 @@ def parse_args():
                    required=True,
                    help="output directory",
                    metavar="DIR")
+    p.add_argument("--prefix",
+                   type=str,
+                   help="prefix for output files [default '%(default)s']",
+                   default="img",
+                   metavar="PREFIX")
+    p.add_argument("--ext",
+                   type=str,
+                   help="file extension without the dot [default %(default)s]",
+                   default="cr3",
+                   metavar="EXT")
+    p.add_argument("--numwidth",
+                   type=int,
+                   help="how many digits use to number files; shorter numbers will be zero-prefixed",
+                   default=0)
     p.add_argument('-v', '--verbose',
                    action="store_true",
                    default=False,
@@ -110,7 +125,7 @@ def parse_args():
                    type=str,
                    default='mdat',
                    metavar="NAME",
-                   help="name of last CR3 chunk (default 'mdat')")
+                   help="name of last CR3 chunk [default '%(default)s']")
     p.add_argument('--maxchunks',
                    type=int,
                    metavar="N",
