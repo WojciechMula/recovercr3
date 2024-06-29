@@ -68,12 +68,16 @@ class Application:
 
         bufsize = 8*MB
         log.info(f"Saving {path}, size {size:,d} B")
-        with path.open('wb') as out:
+
+        tmp = Path(str(path) + ".tmp")
+        with tmp.open('wb') as out:
             while size > 0:
                 k = min(bufsize, size)
                 buf = cr3.read(k)
                 out.write(buf)
                 size -= k
+
+        tmp.rename(path)
 
     def CR3_size(self, cr3, endianess="big"):
         total_size = 0
