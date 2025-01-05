@@ -40,19 +40,15 @@ class Application:
         path = self.args.input
         log.info(f"Processing {path}")
         count = 0
-        found_mdat = False  # Flag to track if we have already found a valid mdat chunk
         with path.open('rb') as dump, path.open('rb') as cr3:
             for offset in CR3_headers(dump, self.input_size):
                 log.debug(f"found CR3 header at offset {offset}")
                 cr3.seek(offset)
                 size = self.CR3_size(cr3)
                 if size > 0:
-                    if found_mdat:
-                        log.debug("Second mdat chunk detected, skipping")
-                        break  # Stop after the first mdat chunk
+                    log.debug("Found valid CR3 chunk, restoring...")
                     self.restore(cr3, offset, size)
                     count += 1
-                    found_mdat = True  # Mark the first mdat as found
                 else:
                     log.debug("not a CR3 file")
 
