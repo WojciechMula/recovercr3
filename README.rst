@@ -145,11 +145,13 @@ Please also note that too large files (with extra chunks) may not be
 properly opened, even if they contain valid RAW file inside. A sample
 too-large file was checked in the following programs:
 
+- Microsoft Photo: **OK**
 - Lightroom: can't open
 - Photoshop: can't open
 - CameraRAW: can't open
 - Affinity Photo: **OK**
 - Capture One 22: **OK**
+- Raw Digger: **OK**
 
 
 Installation

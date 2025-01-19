@@ -22,6 +22,7 @@ class Application:
         self.input_size = args.input.stat().st_size
         self.file_id = 1
 
+        # Handling logic for maxchunks and lastchunk
         if self.args.maxchunks:
             maxchunks = self.args.maxchunks
             def last(chunk_id, chunk_name):
@@ -45,6 +46,7 @@ class Application:
                 cr3.seek(offset)
                 size = self.CR3_size(cr3)
                 if size > 0:
+                    log.debug("Found valid CR3 chunk, restoring...")
                     self.restore(cr3, offset, size)
                     count += 1
                 else:
@@ -56,7 +58,8 @@ class Application:
             log.info("No CR3 files found")
 
     def restore(self, cr3, offset, size):
-        name = '%s%0*d.%s' % (self.args.prefix, self.args.numwidth, self.file_id, self.args.ext)
+        # Use the exact format: 0001.CR3, 0002.CR3, etc.
+        name = f'{self.file_id:04d}.CR3'  # Force the extension to be uppercase (CR3)
         path = self.args.outdir / name
         self.file_id += 1
 
@@ -69,15 +72,13 @@ class Application:
         bufsize = 8*MB
         log.info(f"Saving {path}, size {size:,d} B")
 
-        tmp = Path(str(path) + ".tmp")
-        with tmp.open('wb') as out:
+        # Write directly to the output file
+        with path.open('wb') as out:
             while size > 0:
                 k = min(bufsize, size)
                 buf = cr3.read(k)
                 out.write(buf)
                 size -= k
-
-        tmp.rename(path)
 
     def CR3_size(self, cr3, endianess="big"):
         total_size = 0
@@ -87,7 +88,7 @@ class Application:
 
             total_size += size
 
-            log.debug(f"atom name = {name}, size = {size}")
+            log.debug(f"atom name = {name}, size = {size}, index = {index}")
             if self.CR3_last_chunk(index, name):
                 break
 
@@ -107,11 +108,6 @@ def parse_args():
                    required=True,
                    help="output directory",
                    metavar="DIR")
-    p.add_argument("--prefix",
-                   type=str,
-                   help="prefix for output files [default '%(default)s']",
-                   default="img",
-                   metavar="PREFIX")
     p.add_argument("--ext",
                    type=str,
                    help="file extension without the dot [default %(default)s]",
