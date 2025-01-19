@@ -1,4 +1,14 @@
 import sys
+
+try:
+    import PyQt6
+except ImportError:
+    print("Module PyQt6 not found")
+    print()
+    print("If you use pip to manage python, use `pip install pyqt6`")
+    print("Otherwise, use your system package manager to install PyQt6")
+    sys.exit(1)
+
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QPushButton, 
                              QFileDialog, QLabel, QCheckBox, QSpinBox, QProgressBar, QTextEdit)
 from PyQt6.QtCore import pyqtSignal, QObject
