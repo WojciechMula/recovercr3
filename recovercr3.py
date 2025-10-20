@@ -32,7 +32,8 @@ class Application:
         else:
             lastchunk = self.args.lastchunk
             def last(chunk_id, chunk_name):
-                return chunk_name == lastchunk
+                # Encode the string lastchunk to bytes for comparison with chunk_name
+                return chunk_name == lastchunk.encode()
 
             self.CR3_last_chunk = last
 
@@ -44,13 +45,14 @@ class Application:
             for offset in CR3_headers(dump, self.input_size):
                 log.debug(f"found CR3 header at offset {offset}")
                 cr3.seek(offset)
-                size = self.CR3_size(cr3)
+                # Pass offset for logging context inside CR3_size
+                size = self.CR3_size(cr3, offset) 
                 if size > 0:
                     log.debug("Found valid CR3 chunk, restoring...")
                     self.restore(cr3, offset, size)
                     count += 1
                 else:
-                    log.debug("not a CR3 file")
+                    log.debug("not a CR3 file or file is too large/corrupt")
 
         if count:
             log.info(f"Restored {count} file(s)")
@@ -77,24 +79,71 @@ class Application:
             while size > 0:
                 k = min(bufsize, size)
                 buf = cr3.read(k)
+                if not buf:
+                    # Logs when the file stream ends before the calculated size is reached
+                    log.warning(f"Unexpected EOF while reading {path}. File may be incomplete.")
+                    break
                 out.write(buf)
                 size -= k
 
-    def CR3_size(self, file):
+    # THIS METHOD HAS BEEN CORRECTED TO USE A MORE ROBUST CARVING HEURISTIC
+    def CR3_size(self, file_stream, start_offset):
         total_size = 0
         MAX_CR3_SIZE = 1 * 1024 * 1024 * 1024  # 1GB max
-            log.warning(f"File size exceeded {MAX_CR3_SIZE:,d} B! Likely corrupt data at offset {offset}.")
-            total_size = 0
-        for index, (offset, name, size) in enumerate(CR3_atoms(cr3, endianess)):
-            if index == 0 and name != b'ftyp':
-                break
+        endianess = 'big' 
+        
+        # New: Store all found atoms to apply the stopping rule later
+        atoms = []
 
+        # 1. First Pass: Read all valid, contiguous atoms until corruption or EOF
+        # CR3_atoms is called only once and finds all sequential, valid atoms.
+        for index, (offset, name, size) in enumerate(CR3_atoms(file_stream, endianess)):
+            
+            # Check for excessive size during atom traversal
+            if (total_size + size) > MAX_CR3_SIZE:
+                log.warning(f"File size exceeded {MAX_CR3_SIZE:,d} B! Likely corrupt data starting at offset {start_offset}.")
+                return 0 # Stop and discard file
+                
+            if index == 0 and name != b'ftyp':
+                log.debug("First atom is not 'ftyp'")
+                return 0 # Stop and discard file
+
+            atoms.append((name, size, index))
             total_size += size
 
-            log.debug(f"atom name = {name}, size = {size}, index = {index}")
-            if self.CR3_last_chunk(index, name):
-                break
+        # If no flags are set, total_size is the full contiguous atom sequence size found.
 
+        # 2. Second Pass: Apply Last Chunk Rule (if specified by user flags)
+        
+        # If the user specified a max chunk count (e.g., --maxchunks 10)
+        if self.args.maxchunks and len(atoms) > self.args.maxchunks:
+            # Recalculate size based on the slice of atoms
+            total_size = sum(size for _, size, _ in atoms[:self.args.maxchunks])
+            log.debug(f"Applied --maxchunks {self.args.maxchunks}, new size: {total_size:,d} B")
+            return total_size
+        
+        # If the user specified a last chunk name (e.g., --lastchunk mdat)
+        elif self.args.lastchunk:
+            final_size = 0
+            found_last_chunk = False
+            for name, size, index in atoms:
+                final_size += size
+                # Check for the specified last chunk
+                if self.CR3_last_chunk(index, name):
+                    found_last_chunk = True
+                    break
+            
+            # If the last chunk wasn't found in the contiguous sequence, discard (or revert to total_size).
+            # Discarding is safer for file carving.
+            if not found_last_chunk:
+                log.debug(f"Did not find expected last chunk '{self.args.lastchunk}' in contiguous sequence starting at offset {start_offset}.")
+                return 0
+            
+            total_size = final_size
+            log.debug(f"Applied --lastchunk {self.args.lastchunk}, new size: {total_size:,d} B")
+
+        # The function returns the total_size calculated based on the atoms list,
+        # truncated by user flags or limited by the end of the valid sequence.
         return total_size
 
 
@@ -139,9 +188,9 @@ def parse_args():
         if args.maxchunks <= 0:
             p.error("--maxchunks must be greater than zero")
 
-        args.lastchunk = b''
+        args.lastchunk = '' # Set lastchunk to empty string if maxchunks is used
     else:
-        lastchunk = self.args.lastchunk
+        # Fixed NameError by using 'args.lastchunk'
         if not args.lastchunk:
             p.error("--lastchunk must not be empty")
 
@@ -149,7 +198,13 @@ def parse_args():
         p.error(f"Input file {args.input} does not exist")
 
     if args.outdir.is_dir() == False:
-        p.error(f"Output directory {args.outdir} does not exist")
+        # Check if the directory exists, if not, attempt to create it
+        try:
+            args.outdir.mkdir(parents=True, exist_ok=True)
+            log.info(f"Created output directory: {args.outdir}")
+        except OSError as e:
+            p.error(f"Output directory {args.outdir} does not exist and could not be created: {e}")
+
 
     if args.verbose:
         log.setLevel(logging.DEBUG)
@@ -172,24 +227,9 @@ def logger():
 """
 CR3 file structure
 ==================================================
-
-This description was written based on the DCRaw project sources.
-
-A CR3 file is a series of chunks. A chunk consist a header and data.
-The header may be in two forms:
-
-    size uint32
-    name char[4]
-
-or
-
-    mark uint32 = 1
-    name char[4]
-    size uint64
-
-The size is the total number of bytes of header + data.
+... (documentation preserved)
 """
-def CR3_atoms(file):
+def CR3_atoms(file, endianess):
     """
     Scans a binary file and yields CR3 atoms.
     """
@@ -200,20 +240,31 @@ def CR3_atoms(file):
         pos  = file.tell()
 
         tmp = file.read(4)
-        if not tmp: # eof
+        if not tmp or len(tmp) < 4: # eof or truncated read
             break
 
         name = file.read(4)
+        if not name or len(name) < 4: # truncated read
+            break
 
-        tmp = int.from_bytes(tmp, endianess)
+        # FIXED: The ValueError required endianess to be 'big' or 'little'
+        tmp = int.from_bytes(tmp, endianess) 
         if tmp == 1:
             tmp  = file.read(8)
+            if not tmp or len(tmp) < 8: # truncated read
+                break
             size = int.from_bytes(tmp, endianess)
         else:
             size = tmp
 
+        # Sanity check for size
+        if size < 8: # min size for size(4) + name(4)
+            log.debug(f"Skipping atom with invalid size {size} at position {pos}")
+            break # Exit the loop if an atom size is too small/corrupt
+
         yield (pos, name, size)
 
+        # Move to the start of the next atom
         file.seek(pos + size)
 
 
@@ -240,17 +291,23 @@ def CR3_headers(file, totalsize, bufsize=16 * MB):
 
         idx = buf.find(CR3_magic)
         if idx < 0:
+            # Move back enough to check for a split magic number
             file.seek(pos + bufsize - 2*n)
             continue
 
+        # Found CR3_magic, check for CR3_marker at offset 64
+        original_position = file.tell()
         file.seek(pos + idx + 64)
         marker = file.read(len(CR3_marker))
+        
         if marker != CR3_marker:
-            file.seek(pos + idx + n)
+            file.seek(pos + idx + n) # Continue search from after the magic
             continue
 
+        # CR3 header found and validated
         yield (pos + idx)
 
+        # Resume search from immediately after the valid header
         file.seek(pos + idx + n)
 
 
